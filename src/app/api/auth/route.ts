@@ -29,7 +29,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ user: safeUser });
   } catch (err: any) {
     console.error('Auth GET Error:', err);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json(
+      { error: err?.message || 'Authentication verification error' },
+      { status: 500 }
+    );
   }
 }
 
@@ -110,6 +113,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
   } catch (err: any) {
     console.error('Auth POST Error:', err);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json(
+      { error: err?.message || 'Authentication processing error' },
+      { status: 500 }
+    );
   }
 }

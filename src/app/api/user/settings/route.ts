@@ -1,4 +1,4 @@
-﻿import { NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { validateSession, updateUser } from '@/lib/storage';
 
 export async function GET(request: Request) {
@@ -63,6 +63,6 @@ export async function PUT(request: Request) {
     });
   } catch (err: any) {
     console.error('Settings PUT Error:', err);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: err?.message || 'Failed to update settings' }, { status: 500 });
   }
 }

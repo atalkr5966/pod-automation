@@ -1,8 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-
-const DATA_DIR = path.join(process.cwd(), 'data');
+import os from 'os';
 
 export interface PastDataEntry {
   id: string;
@@ -23,7 +22,7 @@ export interface ChannelConfig {
 
 export interface ScheduleItem {
   enabled: boolean;
-  time: string; // HH:MM format (24h) e.g.  09:30
+  time: string; // HH:MM format (24h) e.g. 09:30
   days: number[]; // 0 = Sun, 1 = Mon, ... 6 = Sat
 }
 
@@ -59,35 +58,102 @@ export interface PodHistoryEntry {
   error?: string;
 }
 
-// Ensure data directory exists
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+export interface Session {
+  token: string;
+  userId: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+// In-Memory Global Cache for serverless persistence across hot requests
+declare global {
+  var __podStorageCache: {
+    users?: User[];
+    sessions?: Session[];
+    history?: PodHistoryEntry[];
+    writableDir?: string;
+  } | undefined;
+}
+
+const memoryStore = globalThis.__podStorageCache || (globalThis.__podStorageCache = {});
+
+// Determine writable data directory (Local ./data or /tmp/pod_automation_data for Serverless/Vercel)
+function getWritableDataDir(): string {
+  if (memoryStore.writableDir) {
+    return memoryStore.writableDir;
+  }
+
+  const localDataDir = path.join(process.cwd(), 'data');
+
+  // Check if local directory is writable
+  try {
+    if (!fs.existsSync(localDataDir)) {
+      fs.mkdirSync(localDataDir, { recursive: true });
+    }
+    const testFile = path.join(localDataDir, '.test_write');
+    fs.writeFileSync(testFile, '1');
+    fs.unlinkSync(testFile);
+    memoryStore.writableDir = localDataDir;
+    return localDataDir;
+  } catch {
+    // Read-only filesystem detected (Serverless / Vercel Lambda)
+    const tmpDataDir = path.join(os.tmpdir(), 'pod_automation_data');
+    try {
+      if (!fs.existsSync(tmpDataDir)) {
+        fs.mkdirSync(tmpDataDir, { recursive: true });
+      }
+    } catch (e) {
+      console.warn('[Storage] Warning creating tmp data dir:', e);
+    }
+    memoryStore.writableDir = tmpDataDir;
+    return tmpDataDir;
   }
 }
 
-const USERS_FILE = path.join(DATA_DIR, 'users.json');
-const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
-const HISTORY_FILE = path.join(DATA_DIR, 'pod_history.json');
+function getFilePath(filename: 'users.json' | 'sessions.json' | 'pod_history.json'): string {
+  const dir = getWritableDataDir();
+  const targetPath = path.join(/*turbopackIgnore: true*/ dir, filename);
 
-function readJsonFile<T>(filePath: string, fallback: T): T {
-  ensureDataDir();
-  if (!fs.existsSync(filePath)) {
-    fs.writeFileSync(filePath, JSON.stringify(fallback, null, 2), 'utf-8');
-    return fallback;
+  // If running in /tmp and target file doesn't exist yet, try to copy initial bundled version
+  if (dir !== path.join(process.cwd(), 'data') && !fs.existsSync(/*turbopackIgnore: true*/ targetPath)) {
+    try {
+      const bundledPath = path.join(process.cwd(), 'data', filename);
+      if (fs.existsSync(bundledPath)) {
+        const content = fs.readFileSync(bundledPath, 'utf-8');
+        fs.writeFileSync(/*turbopackIgnore: true*/ targetPath, content, 'utf-8');
+      }
+    } catch (e) {
+      // Ignore copy error, will fall back to default
+    }
   }
+
+  return targetPath;
+}
+
+function readJsonFile<T>(filename: 'users.json' | 'sessions.json' | 'pod_history.json', fallback: T): T {
   try {
-    const raw = fs.readFileSync(filePath, 'utf-8');
+    const filePath = getFilePath(filename);
+    if (!fs.existsSync(/*turbopackIgnore: true*/ filePath)) {
+      try {
+        fs.writeFileSync(/*turbopackIgnore: true*/ filePath, JSON.stringify(fallback, null, 2), 'utf-8');
+      } catch {}
+      return fallback;
+    }
+    const raw = fs.readFileSync(/*turbopackIgnore: true*/ filePath, 'utf-8');
     return JSON.parse(raw) as T;
   } catch (error) {
-    console.error(`Error reading ${filePath}:`, error);
+    console.warn(`[Storage] Read fallback for ${filename}:`, error);
     return fallback;
   }
 }
 
-function writeJsonFile<T>(filePath: string, data: T): void {
-  ensureDataDir();
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+function writeJsonFile<T>(filename: 'users.json' | 'sessions.json' | 'pod_history.json', data: T): void {
+  try {
+    const filePath = getFilePath(filename);
+    fs.writeFileSync(/*turbopackIgnore: true*/ filePath, JSON.stringify(data, null, 2), 'utf-8');
+  } catch (error) {
+    console.warn(`[Storage] Disk write warning for ${filename}:`, error);
+  }
 }
 
 // Password helpers
@@ -102,7 +168,7 @@ export function verifyPassword(password: string, hash: string, salt: string): bo
   return result.hash === hash;
 }
 
-// Default initial past data for a user
+// Default initial past data for a new user
 export function getDefaultPastData(): PastDataEntry[] {
   const today = new Date();
   const formatPastDate = (daysAgo: number) => {
@@ -180,9 +246,14 @@ export function getDefaultPastData(): PastDataEntry[] {
   ];
 }
 
-// User CRUD operations
+// User CRUD operations with dual-layer caching
 export function getAllUsers(): User[] {
-  return readJsonFile<User[]>(USERS_FILE, []);
+  if (memoryStore.users && memoryStore.users.length > 0) {
+    return memoryStore.users;
+  }
+  const loaded = readJsonFile<User[]>('users.json', []);
+  memoryStore.users = loaded;
+  return loaded;
 }
 
 export function findUserById(id: string): User | undefined {
@@ -240,7 +311,8 @@ export function createUser(userData: {
   };
 
   users.push(newUser);
-  writeJsonFile(USERS_FILE, users);
+  memoryStore.users = users;
+  writeJsonFile('users.json', users);
   return newUser;
 }
 
@@ -255,20 +327,14 @@ export function updateUser(id: string, updates: Partial<User>): User | null {
     updatedAt: new Date().toISOString()
   };
 
-  writeJsonFile(USERS_FILE, users);
+  memoryStore.users = users;
+  writeJsonFile('users.json', users);
   return users[index];
 }
 
 // Session Management
-interface Session {
-  token: string;
-  userId: string;
-  createdAt: string;
-  expiresAt: string;
-}
-
 export function createSession(userId: string): string {
-  const sessions = readJsonFile<Session[]>(SESSIONS_FILE, []);
+  const sessions = memoryStore.sessions || readJsonFile<Session[]>('sessions.json', []);
   const token = crypto.randomBytes(32).toString('hex');
   const now = new Date();
   const expires = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
@@ -280,13 +346,16 @@ export function createSession(userId: string): string {
     expiresAt: expires.toISOString()
   });
 
-  writeJsonFile(SESSIONS_FILE, sessions);
+  memoryStore.sessions = sessions;
+  writeJsonFile('sessions.json', sessions);
   return token;
 }
 
 export function validateSession(token: string): User | null {
   if (!token) return null;
-  const sessions = readJsonFile<Session[]>(SESSIONS_FILE, []);
+  const sessions = memoryStore.sessions || readJsonFile<Session[]>('sessions.json', []);
+  memoryStore.sessions = sessions;
+
   const session = sessions.find((s) => s.token === token);
   if (!session) return null;
 
@@ -298,34 +367,36 @@ export function validateSession(token: string): User | null {
 }
 
 export function deleteSession(token: string): void {
-  const sessions = readJsonFile<Session[]>(SESSIONS_FILE, []);
+  const sessions = memoryStore.sessions || readJsonFile<Session[]>('sessions.json', []);
   const filtered = sessions.filter((s) => s.token !== token);
-  writeJsonFile(SESSIONS_FILE, filtered);
+  memoryStore.sessions = filtered;
+  writeJsonFile('sessions.json', filtered);
 }
 
 // POD History Operations
 export function getAllHistory(userId?: string): PodHistoryEntry[] {
-  const all = readJsonFile<PodHistoryEntry[]>(HISTORY_FILE, []);
+  const all = memoryStore.history || readJsonFile<PodHistoryEntry[]>('pod_history.json', []);
+  memoryStore.history = all;
   if (userId) {
-    return all.filter((h) => h.userId === userId).reverse();
+    return all.filter((h) => h.userId === userId).slice().reverse();
   }
-  return all.reverse();
+  return all.slice().reverse();
 }
 
 export function addHistoryEntry(entry: Omit<PodHistoryEntry, 'id' | 'timestamp'>): PodHistoryEntry {
-  const history = readJsonFile<PodHistoryEntry[]>(HISTORY_FILE, []);
+  const history = memoryStore.history || readJsonFile<PodHistoryEntry[]>('pod_history.json', []);
   const newEntry: PodHistoryEntry = {
     ...entry,
     id: `hist_${crypto.randomUUID()}`,
     timestamp: new Date().toISOString()
   };
   history.push(newEntry);
-  writeJsonFile(HISTORY_FILE, history);
+  memoryStore.history = history;
+  writeJsonFile('pod_history.json', history);
   return newEntry;
 }
 
-// Initialize default storage if needed
+// Initialize default storage safely
 export function initDefaultData() {
-  // Ensure storage is initialized cleanly without demo credentials
   getAllUsers();
 }

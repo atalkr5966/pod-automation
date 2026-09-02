@@ -40,6 +40,6 @@ export async function POST(request: Request) {
     });
   } catch (err: any) {
     console.error('Send POD Error:', err);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: err?.message || 'Failed to dispatch POD' }, { status: 500 });
   }
 }

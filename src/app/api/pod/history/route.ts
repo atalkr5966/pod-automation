@@ -1,4 +1,4 @@
-﻿import { NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { validateSession, getAllHistory } from '@/lib/storage';
 
 export async function GET(request: Request) {
@@ -22,6 +22,6 @@ export async function GET(request: Request) {
     });
   } catch (err: any) {
     console.error('History GET Error:', err);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: err?.message || 'Failed to fetch history' }, { status: 500 });
   }
 }

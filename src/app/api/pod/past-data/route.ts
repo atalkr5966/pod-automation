@@ -26,7 +26,7 @@ export async function GET(request: Request) {
     });
   } catch (err: any) {
     console.error('Past-Data GET Error:', err);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: err?.message || 'Failed to fetch past data' }, { status: 500 });
   }
 }
 
@@ -87,7 +87,7 @@ export async function POST(request: Request) {
     });
   } catch (err: any) {
     console.error('Past-Data POST Error:', err);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: err?.message || 'Failed to add past data entry' }, { status: 500 });
   }
 }
 
@@ -126,6 +126,6 @@ export async function DELETE(request: Request) {
     });
   } catch (err: any) {
     console.error('Past-Data DELETE Error:', err);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: err?.message || 'Failed to delete past data entry' }, { status: 500 });
   }
 }
