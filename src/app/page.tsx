@@ -455,6 +455,7 @@ export default function Home() {
     if (!token) return;
     setIsTestingSlack(true);
     setSettingsStatus({ type: '', message: '' });
+    setSlackSaveStatus({ type: '', message: '' });
 
     try {
       const res = await fetch('/api/channels/test', {
@@ -468,20 +469,20 @@ export default function Home() {
 
       const data = await res.json();
       if (res.ok && data.success) {
-        setSettingsStatus({
-          type: 'success',
-          message: data.simulated
-            ? `⚠️ Slack Connection Simulated (No live URL provided)`
-            : `✅ Slack Test Ping Delivered Successfully!`,
-        });
+        const msg = data.simulated
+          ? `⚠️ Slack Connection Simulated (No live URL provided)`
+          : `✅ Slack Test Ping Delivered Successfully!`;
+        setSettingsStatus({ type: 'success', message: msg });
+        setSlackSaveStatus({ type: 'success', message: msg });
       } else {
-        setSettingsStatus({
-          type: 'error',
-          message: `❌ Slack Test Failed: ${data.error || 'Unknown error'}`,
-        });
+        const errMsg = `❌ Slack Test Failed: ${data.error || 'Unknown error'}`;
+        setSettingsStatus({ type: 'error', message: errMsg });
+        setSlackSaveStatus({ type: 'error', message: errMsg });
       }
     } catch (err) {
-      setSettingsStatus({ type: 'error', message: 'Network error occurred while testing.' });
+      const netErr = 'Network error occurred while testing.';
+      setSettingsStatus({ type: 'error', message: netErr });
+      setSlackSaveStatus({ type: 'error', message: netErr });
     } finally {
       setIsTestingSlack(false);
     }
@@ -524,6 +525,13 @@ export default function Home() {
 
       const data = await res.json();
       if (res.ok) {
+        if (data.token) {
+          localStorage.setItem('pod_auth_token', data.token);
+          setToken(data.token);
+        }
+        if (data.settings) {
+          setUser((prev) => (prev ? { ...prev, ...data.settings } : prev));
+        }
         setSettingsStatus({ type: 'success', message: '🎉 Schedule & Slack settings saved successfully!' });
       } else {
         setSettingsStatus({ type: 'error', message: data.error || 'Failed to save settings.' });
@@ -641,6 +649,13 @@ export default function Home() {
 
       const data = await res.json();
       if (res.ok) {
+        if (data.token) {
+          localStorage.setItem('pod_auth_token', data.token);
+          setToken(data.token);
+        }
+        if (data.settings) {
+          setUser((prev) => (prev ? { ...prev, ...data.settings } : prev));
+        }
         setSlackSaveStatus({
           type: 'success',
           message: slackWebhook.trim()

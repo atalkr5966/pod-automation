@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { validateSession, updateUser } from '@/lib/storage';
+import { validateSession, updateUser, createSession } from '@/lib/storage';
 
 export async function GET(request: Request) {
   try {
@@ -50,11 +50,13 @@ export async function PUT(request: Request) {
     if (channels !== undefined) updates.channels = channels;
     if (schedule !== undefined) updates.schedule = schedule;
 
-    const updatedUser = updateUser(user.id, updates);
+    const updatedUser = updateUser(user.id, updates) || (user ? { ...user, ...updates } : null);
+    const refreshedToken = updatedUser ? createSession(updatedUser) : token;
 
     return NextResponse.json({
       success: true,
       message: 'Settings updated successfully',
+      token: refreshedToken,
       settings: {
         name: updatedUser?.name,
         channels: updatedUser?.channels,

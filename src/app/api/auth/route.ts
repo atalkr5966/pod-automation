@@ -65,7 +65,7 @@ export async function POST(request: Request) {
         slackWebhook,
       });
 
-      const token = createSession(user.id);
+      const token = createSession(user);
       const { passwordHash, salt, ...safeUser } = user;
 
       return NextResponse.json({
@@ -91,7 +91,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Invalid username/email or password' }, { status: 401 });
       }
 
-      const token = createSession(user.id);
+      const token = createSession(user);
       const { passwordHash, salt, ...safeUser } = user;
 
       return NextResponse.json({

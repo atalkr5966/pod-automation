@@ -79,6 +79,13 @@ export default function SlackSetupPage() {
 
       const data = await res.json();
       if (res.ok) {
+        if (data.token) {
+          localStorage.setItem('pod_auth_token', data.token);
+          setToken(data.token);
+        }
+        if (data.settings) {
+          setUser((prev) => (prev ? { ...prev, ...data.settings } : prev));
+        }
         setStatus({
           type: 'success',
           message: slackWebhook.trim()

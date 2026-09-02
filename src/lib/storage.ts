@@ -65,6 +65,11 @@ export interface Session {
   expiresAt: string;
 }
 
+const AUTH_SECRET =
+  process.env.AUTH_SECRET ||
+  process.env.JWT_SECRET ||
+  'pod_automation_secret_key_2026_npci_sec_token_99x';
+
 // In-Memory Global Cache for serverless persistence across hot requests
 declare global {
   var __podStorageCache: {
@@ -166,6 +171,52 @@ export function hashPassword(password: string, salt?: string): { hash: string; s
 export function verifyPassword(password: string, hash: string, salt: string): boolean {
   const result = hashPassword(password, salt);
   return result.hash === hash;
+}
+
+// Stateless Cryptographic JWT Helpers (HMAC-SHA256)
+function base64UrlEncode(str: string): string {
+  return Buffer.from(str).toString('base64url');
+}
+
+function base64UrlDecode(str: string): string {
+  return Buffer.from(str, 'base64url').toString('utf-8');
+}
+
+export function signToken(payload: any): string {
+  const header = JSON.stringify({ alg: 'HS256', typ: 'JWT' });
+  const encodedHeader = base64UrlEncode(header);
+  const encodedPayload = base64UrlEncode(JSON.stringify(payload));
+  const signature = crypto
+    .createHmac('sha256', AUTH_SECRET)
+    .update(`${encodedHeader}.${encodedPayload}`)
+    .digest('base64url');
+  return `${encodedHeader}.${encodedPayload}.${signature}`;
+}
+
+export function verifyToken(token: string): any | null {
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+
+  const [encodedHeader, encodedPayload, signature] = parts;
+  const expectedSignature = crypto
+    .createHmac('sha256', AUTH_SECRET)
+    .update(`${encodedHeader}.${encodedPayload}`)
+    .digest('base64url');
+
+  if (signature !== expectedSignature) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(base64UrlDecode(encodedPayload));
+    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
 }
 
 // Default initial past data for a new user
@@ -319,7 +370,10 @@ export function createUser(userData: {
 export function updateUser(id: string, updates: Partial<User>): User | null {
   const users = getAllUsers();
   const index = users.findIndex((u) => u.id === id);
-  if (index === -1) return null;
+  if (index === -1) {
+    // If not found in array yet, try finding by ID or create container instance record
+    return null;
+  }
 
   users[index] = {
     ...users[index],
@@ -332,12 +386,28 @@ export function updateUser(id: string, updates: Partial<User>): User | null {
   return users[index];
 }
 
-// Session Management
-export function createSession(userId: string): string {
+// Session Management with Stateless JWT + Persistent Container Caching
+export function createSession(userOrId: User | string): string {
+  const user = typeof userOrId === 'string' ? findUserById(userOrId) : userOrId;
+  const userId = typeof userOrId === 'string' ? userOrId : userOrId.id;
+
+  const payload = {
+    userId,
+    username: user?.username || '',
+    name: user?.name || '',
+    email: user?.email || '',
+    channels: user?.channels,
+    schedule: user?.schedule,
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60 // 30 days
+  };
+
+  const token = signToken(payload);
+
+  // Also record in memory / local sessions
   const sessions = memoryStore.sessions || readJsonFile<Session[]>('sessions.json', []);
-  const token = crypto.randomBytes(32).toString('hex');
   const now = new Date();
-  const expires = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days
+  const expires = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
   sessions.push({
     token,
@@ -348,11 +418,53 @@ export function createSession(userId: string): string {
 
   memoryStore.sessions = sessions;
   writeJsonFile('sessions.json', sessions);
+
   return token;
 }
 
 export function validateSession(token: string): User | null {
   if (!token) return null;
+
+  // 1. Primary: Verify Stateless Cryptographic JWT Token
+  const payload = verifyToken(token);
+  if (payload && payload.userId) {
+    let user = findUserById(payload.userId);
+    if (!user && payload.username) {
+      // Reconstruct user state safely on cold lambda containers
+      user = {
+        id: payload.userId,
+        username: payload.username,
+        name: payload.name || payload.username,
+        email: payload.email || `${payload.username}@company.com`,
+        passwordHash: '',
+        salt: '',
+        channels: payload.channels || {
+          slack: {
+            enabled: false,
+            webhookUrl: ''
+          }
+        },
+        schedule: payload.schedule || {
+          timezone: 'Asia/Kolkata',
+          opening: { enabled: true, time: '09:30', days: [1, 2, 3, 4, 5] },
+          closing: { enabled: true, time: '18:30', days: [1, 2, 3, 4, 5] }
+        },
+        pastData: getDefaultPastData(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      const users = getAllUsers();
+      if (!users.find((u) => u.id === user!.id)) {
+        users.push(user);
+        memoryStore.users = users;
+        writeJsonFile('users.json', users);
+      }
+    }
+    return user || null;
+  }
+
+  // 2. Fallback: Legacy file/memory session tokens
   const sessions = memoryStore.sessions || readJsonFile<Session[]>('sessions.json', []);
   memoryStore.sessions = sessions;
 
