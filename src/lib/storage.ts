@@ -510,5 +510,24 @@ export function addHistoryEntry(entry: Omit<PodHistoryEntry, 'id' | 'timestamp'>
 
 // Initialize default storage safely
 export function initDefaultData() {
-  getAllUsers();
+  const adminUser = process.env.ADMIN_USER || process.env.DEFAULT_USER;
+  const adminPass = process.env.ADMIN_PASSWORD || process.env.DEFAULT_PASSWORD;
+  const adminEmail = process.env.ADMIN_EMAIL || process.env.DEFAULT_EMAIL;
+
+  if (adminUser && adminPass) {
+    const existing =
+      findUserByUsernameOrEmail(adminUser) ||
+      (adminEmail ? findUserByUsernameOrEmail(adminEmail) : undefined);
+    if (!existing) {
+      createUser({
+        username: adminUser,
+        email: adminEmail || `${adminUser}@company.com`,
+        name: adminUser,
+        password: adminPass,
+        slackWebhook: process.env.SLACK_WEBHOOK_URL || '',
+      });
+    }
+  } else {
+    getAllUsers();
+  }
 }
