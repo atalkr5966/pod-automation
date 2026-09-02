@@ -1,0 +1,134 @@
+[
+  {
+    "id": "usr_ba569013-cab8-4230-bdfb-b67823a25199",
+    "username": "test_dev_0460",
+    "email": "test0460@company.com",
+    "name": "Test Engineer",
+    "passwordHash": "744dc133c93cbb5c3feb741c2dca4d79d6b2f794ad5b4a3d4d4cabc793829b61e7a943ae4da1400c8aa5c92bbae2c222891fe44fbe2db5a79bc7e02a4618f3b6",
+    "salt": "6483da8414d14defd230a876b2aad08b",
+    "channels": {
+      "slack": {
+        "enabled": true,
+        "webhookUrl": "https://hooks.slack.com/services/test/mock/webhook"
+      },
+      "telegram": {
+        "enabled": false,
+        "botToken": "",
+        "chatId": ""
+      },
+      "discord": {
+        "enabled": true,
+        "webhookUrl": "https://discord.com/api/webhooks/test/mock"
+      }
+    },
+    "schedule": {
+      "timezone": "Asia/Kolkata",
+      "opening": {
+        "enabled": true,
+        "time": "09:30",
+        "days": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "targetChannel": "all"
+      },
+      "closing": {
+        "enabled": true,
+        "time": "18:30",
+        "days": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "targetChannel": "all"
+      }
+    },
+    "pastData": [
+      {
+        "id": "log_c48fb710-5e4e-4d65-8fe5-bd9c2614039d",
+        "date": "2026-08-30",
+        "type": "GENERAL",
+        "tasks": [
+          "1. Optimized PostgreSQL indexing and latency",
+          "2. Deployed AWS ECS task definitions",
+          "3. Conducted team retrospective"
+        ],
+        "notes": "Latency reduced by 40%",
+        "category": "Cloud & Database",
+        "createdAt": "2026-08-31T09:56:21.264Z"
+      },
+      {
+        "id": "log-1",
+        "date": "2026-08-28",
+        "type": "OPENING",
+        "category": "Frontend & APIs",
+        "tasks": [
+          "Review sprint backlog and daily priority items",
+          "Implement responsive glassmorphism UI components",
+          "Integrate multi-channel webhook dispatch API"
+        ],
+        "notes": "Sync with team scheduled for 11:00 AM",
+        "createdAt": "2026-08-31T09:56:20.941Z"
+      },
+      {
+        "id": "log-2",
+        "date": "2026-08-28",
+        "type": "CLOSING",
+        "category": "Frontend & APIs",
+        "tasks": [
+          "Completed UI components and webhook integrations",
+          "Fixed state synchronizations on dashboard",
+          "Tested webhook payload triggers with Slack & Discord"
+        ],
+        "notes": "All PRs submitted for review. Tomorrow focus on scheduling daemon.",
+        "createdAt": "2026-08-31T09:56:20.941Z"
+      },
+      {
+        "id": "log-3",
+        "date": "2026-08-29",
+        "type": "OPENING",
+        "category": "Backend & Automation",
+        "tasks": [
+          "Review weekend production metrics & logs",
+          "Build cron scheduling daemon for automated POD delivery",
+          "Sync with backend lead at 2:00 PM"
+        ],
+        "notes": "No blockers. Target release scheduled for end of week.",
+        "createdAt": "2026-08-31T09:56:20.941Z"
+      },
+      {
+        "id": "log-4",
+        "date": "2026-08-29",
+        "type": "CLOSING",
+        "category": "Backend & Automation",
+        "tasks": [
+          "Delivered node-cron daemon integration",
+          "Successfully dispatched test alerts to Telegram bot",
+          "Resolved timezone offset calculations for Asia/Kolkata"
+        ],
+        "notes": "Ready for full integration testing.",
+        "createdAt": "2026-08-31T09:56:20.941Z"
+      },
+      {
+        "id": "log-5",
+        "date": "2026-08-30",
+        "type": "OPENING",
+        "category": "Testing & Release",
+        "tasks": [
+          "End-to-end testing of user login and channel management",
+          "Prepare release notes and user documentation",
+          "Final sprint wrap-up review"
+        ],
+        "notes": "High priority release today.",
+        "createdAt": "2026-08-31T09:56:20.941Z"
+      }
+    ],
+    "createdAt": "2026-08-31T09:56:20.941Z",
+    "updatedAt": "2026-08-31T09:56:21.265Z"
+  }
+]

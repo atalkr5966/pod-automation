@@ -6,10 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "automate": "node automation.js"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
     "next": "16.3.0",
+    "node-cron": "^4.6.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
