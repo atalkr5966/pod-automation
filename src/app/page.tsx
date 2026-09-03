@@ -532,7 +532,7 @@ export default function Home() {
         if (data.settings) {
           setUser((prev) => (prev ? { ...prev, ...data.settings } : prev));
         }
-        setSettingsStatus({ type: 'success', message: '🎉 Schedule & Slack settings saved successfully!' });
+        setSettingsStatus({ type: 'success', message: '🎉 Schedule & Slack settings saved successfully to server!' });
       } else {
         setSettingsStatus({ type: 'error', message: data.error || 'Failed to save settings.' });
       }
@@ -540,6 +540,77 @@ export default function Home() {
       setSettingsStatus({ type: 'error', message: 'Network error occurred while saving.' });
     } finally {
       setIsSavingSettings(false);
+    }
+  };
+
+  // Instant Force Trigger POD to Slack
+  const handleForceTrigger = async (type: 'OPENING' | 'CLOSING') => {
+    if (!token) return;
+    setIsManualCheckingCron(true);
+    setSettingsStatus({ type: 'info', message: `🚀 Generating and dispatching ${type} POD to Slack now...` });
+
+    try {
+      // First ensure latest settings are saved
+      const payload = {
+        channels: {
+          slack: { enabled: !!slackWebhook, webhookUrl: slackWebhook },
+        },
+        schedule: {
+          timezone: user?.schedule?.timezone || 'Asia/Kolkata',
+          opening: {
+            enabled: openingEnabled,
+            time: openingTime,
+            days: openingDays,
+          },
+          closing: {
+            enabled: closingEnabled,
+            time: closingTime,
+            days: closingDays,
+          },
+        },
+      };
+
+      await fetch('/api/user/settings', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const res = await fetch(`/api/cron/trigger?force=true&type=${type}`);
+      const data = await res.json();
+      if (res.ok && data.triggered && data.triggered.length > 0) {
+        const item = data.triggered[0];
+        const slackRes = item.results?.[0];
+        if (slackRes?.simulated) {
+          setSettingsStatus({
+            type: 'info',
+            message: `⚠️ ${type} POD generated, but sent in Simulation Mode (No real Slack Webhook URL). Please connect your live Slack webhook in the Slack Channel tab!`,
+          });
+        } else if (slackRes?.success) {
+          setSettingsStatus({
+            type: 'success',
+            message: `🎉 Success! ${type} POD generated and dispatched directly to your Slack channel right now!`,
+          });
+        } else {
+          setSettingsStatus({
+            type: 'error',
+            message: `❌ Slack dispatch failed: ${slackRes?.error || 'Unknown error'}`,
+          });
+        }
+        fetchHistory();
+      } else {
+        setSettingsStatus({
+          type: 'error',
+          message: '❌ Failed to trigger POD generation.',
+        });
+      }
+    } catch (e: any) {
+      setSettingsStatus({ type: 'error', message: `❌ Error: ${e.message || 'Network error'}` });
+    } finally {
+      setIsManualCheckingCron(false);
     }
   };
 
@@ -1497,12 +1568,41 @@ export default function Home() {
                 </div>
               </div>
 
-              <button className="btn btn-primary" style={{ width: '100%' }} onClick={handleSaveSettings} disabled={isSavingSettings}>
-                {isSavingSettings ? 'Saving...' : '💾 Save Dispatch Timers'}
-              </button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16 }}>
+                <button className="btn btn-primary" style={{ width: '100%', padding: '12px' }} onClick={handleSaveSettings} disabled={isSavingSettings}>
+                  {isSavingSettings ? 'Saving...' : '💾 Save Dispatch Timers'}
+                </button>
+
+                {/* Instant Live Slack Trigger Section */}
+                <div style={{ padding: 14, background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: 12, marginTop: 6 }}>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#334155', marginBottom: 8 }}>
+                    ⚡ Instant Live Test (Direct Slack Dispatch)
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ padding: '8px 10px', fontSize: '0.78rem', background: '#fef3c7', color: '#92400e', borderColor: '#fcd34d', fontWeight: 600 }}
+                      onClick={() => handleForceTrigger('OPENING')}
+                      disabled={isManualCheckingCron}
+                    >
+                      🚀 Send Opening POD Now
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ padding: '8px 10px', fontSize: '0.78rem', background: '#e0e7ff', color: '#3730a3', borderColor: '#c7d2fe', fontWeight: 600 }}
+                      onClick={() => handleForceTrigger('CLOSING')}
+                      disabled={isManualCheckingCron}
+                    >
+                      🚀 Send Closing POD Now
+                    </button>
+                  </div>
+                </div>
+              </div>
 
               {settingsStatus.message && (
-                <div className={`${styles.statusMessage} ${styles[settingsStatus.type]}`}>
+                <div className={`${styles.statusMessage} ${styles[settingsStatus.type]}`} style={{ marginTop: 14 }}>
                   {settingsStatus.message}
                 </div>
               )}
@@ -1526,7 +1626,7 @@ export default function Home() {
                     )}
                   </div>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', wordBreak: 'break-all' }}>
-                    {slackWebhook ? `${slackWebhook.slice(0, 36)}...` : 'No live Slack Webhook configured yet.'}
+                    {slackWebhook ? `${slackWebhook.slice(0, 42)}...` : 'No live Slack Webhook configured yet.'}
                   </div>
                 </div>
 

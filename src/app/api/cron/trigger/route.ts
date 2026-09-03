@@ -13,13 +13,27 @@ setInterval(() => {
   }
 }, 3600000); // clear every hour
 
+function normalizeTime(t?: string): string {
+  if (!t) return '';
+  const parts = t.trim().split(':');
+  if (parts.length < 2) return t.trim();
+  const h = parts[0].padStart(2, '0');
+  const m = parts[1].padStart(2, '0');
+  return `${h}:${m}`;
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const isForce = searchParams.get('force') === 'true';
     const targetType = searchParams.get('type') as 'OPENING' | 'CLOSING' | null;
+    const targetUserId = searchParams.get('userId');
 
-    const users = getAllUsers();
+    let users = getAllUsers();
+    if (targetUserId) {
+      users = users.filter((u) => u.id === targetUserId || u.username === targetUserId);
+    }
+
     const triggered: any[] = [];
     const scheduleStatus: any[] = [];
 
@@ -56,21 +70,32 @@ export async function GET(request: Request) {
       const opening = user.schedule?.opening;
       const closing = user.schedule?.closing;
 
+      const normUserTime = normalizeTime(userTimeStr);
+      const normOpeningTime = normalizeTime(opening?.time);
+      const normClosingTime = normalizeTime(closing?.time);
+
+      const isOpeningMatch = normOpeningTime === normUserTime;
+      const isClosingMatch = normClosingTime === normUserTime;
+      const isOpeningDayActive = opening?.days ? opening.days.includes(currentDay) : true;
+      const isClosingDayActive = closing?.days ? closing.days.includes(currentDay) : true;
+
       scheduleStatus.push({
         user: user.username,
+        userId: user.id,
         currentTime: userTimeStr,
         currentDay: userDayStr,
+        currentDayIndex: currentDay,
         opening: {
           enabled: opening?.enabled,
           scheduledTime: opening?.time,
-          isMatch: opening?.time === userTimeStr,
-          dayActive: opening?.days?.includes(currentDay),
+          isMatch: isOpeningMatch,
+          dayActive: isOpeningDayActive,
         },
         closing: {
           enabled: closing?.enabled,
           scheduledTime: closing?.time,
-          isMatch: closing?.time === userTimeStr,
-          dayActive: closing?.days?.includes(currentDay),
+          isMatch: isClosingMatch,
+          dayActive: isClosingDayActive,
         },
       });
 
@@ -78,11 +103,9 @@ export async function GET(request: Request) {
       const shouldTriggerOpening =
         isForce && targetType === 'OPENING'
           ? true
-          : opening?.enabled &&
-            opening.days?.includes(currentDay) &&
-            opening.time === userTimeStr;
+          : opening?.enabled && isOpeningDayActive && isOpeningMatch;
 
-      const openingKey = `${user.id}_OPENING_${userDateStr}_${userTimeStr}`;
+      const openingKey = `${user.id}_OPENING_${userDateStr}_${normUserTime}`;
 
       if (shouldTriggerOpening && (!firedRecords.has(openingKey) || isForce)) {
         if (!isForce) firedRecords.add(openingKey);
@@ -107,11 +130,9 @@ export async function GET(request: Request) {
       const shouldTriggerClosing =
         isForce && targetType === 'CLOSING'
           ? true
-          : closing?.enabled &&
-            closing.days?.includes(currentDay) &&
-            closing.time === userTimeStr;
+          : closing?.enabled && isClosingDayActive && isClosingMatch;
 
-      const closingKey = `${user.id}_CLOSING_${userDateStr}_${userTimeStr}`;
+      const closingKey = `${user.id}_CLOSING_${userDateStr}_${normUserTime}`;
 
       if (shouldTriggerClosing && (!firedRecords.has(closingKey) || isForce)) {
         if (!isForce) firedRecords.add(closingKey);

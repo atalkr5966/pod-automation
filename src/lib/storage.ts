@@ -299,9 +299,6 @@ export function getDefaultPastData(): PastDataEntry[] {
 
 // User CRUD operations with dual-layer caching
 export function getAllUsers(): User[] {
-  if (memoryStore.users && memoryStore.users.length > 0) {
-    return memoryStore.users;
-  }
   const loaded = readJsonFile<User[]>('users.json', []);
   memoryStore.users = loaded;
   return loaded;
