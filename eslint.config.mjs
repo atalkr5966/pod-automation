@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "automation.js",
+    "send-pod.js",
+    "scripts/**",
   ]),
 ]);
 

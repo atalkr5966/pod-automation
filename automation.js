@@ -1,56 +1,74 @@
 require('dotenv').config({ path: '.env.local' });
-const cron = require('node-cron');
 const http = require('http');
+const https = require('https');
 
 // Configuration
-// Schedule: Every 30 seconds to ensure no minute boundary is missed
 const NEXTJS_API_URL = process.env.NEXTJS_API_URL || 'http://localhost:3000';
+const CRON_SECRET = process.env.CRON_SECRET || '';
 
 console.log('====================================================');
-console.log('🕒 POD Automation Background Scheduler Daemon Started');
-console.log(`📅 Target Next.js server: ${NEXTJS_API_URL}`);
-console.log(`⏱️ Schedule poll: Running every 30 seconds`);
+console.log('🏛️  POD Automation - Production Scheduler Daemon');
+console.log(`📅 Target Server: ${NEXTJS_API_URL}`);
+console.log(`🔒 Cron Secret Protected: ${CRON_SECRET ? 'YES' : 'NO (Development Mode)'}`);
+console.log(`⏱️ Frequency: Every 30 seconds`);
 console.log('====================================================\n');
 
 function triggerCronCheck() {
   const currentLocalTime = new Date().toLocaleTimeString();
+  const urlObj = new URL(`${NEXTJS_API_URL}/api/cron/execute`);
+  const client = urlObj.protocol === 'https:' ? https : http;
 
-  const req = http.get(`${NEXTJS_API_URL}/api/cron/trigger`, (res) => {
-    let data = '';
+  const headers = {};
+  if (CRON_SECRET) {
+    headers['Authorization'] = `Bearer ${CRON_SECRET}`;
+    headers['x-cron-secret'] = CRON_SECRET;
+  }
 
-    res.on('data', (chunk) => {
-      data += chunk;
-    });
+  const req = client.get(
+    urlObj.toString(),
+    { headers },
+    (res) => {
+      let data = '';
 
-    res.on('end', () => {
-      try {
-        const result = JSON.parse(data);
-        if (result.triggered && result.triggered.length > 0) {
-          console.log(`\n[${currentLocalTime}] 🚀 Dispatched ${result.triggered.length} Scheduled POD(s):`);
-          result.triggered.forEach((t) => {
-            console.log(`  - User: ${t.user} | Type: ${t.type} | Time: ${t.time}`);
-          });
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+
+      res.on('end', () => {
+        try {
+          const result = JSON.parse(data);
+          if (result.report) {
+            const { jobsTriggered, jobsSucceeded, jobsFailed, jobsSkipped, details } = result.report;
+            if (jobsTriggered > 0) {
+              console.log(`\n[${currentLocalTime}] 🚀 Triggered ${jobsTriggered} scheduled job(s) (${jobsSucceeded} succeeded, ${jobsFailed} failed):`);
+              details.forEach((d) => {
+                console.log(`  - [${d.status}] ${d.scheduleName} | Action: ${d.actionType} | Channel: ${d.channel} | Key: ${d.executionKey}`);
+                if (d.error) console.log(`    ↳ Error: ${d.error}`);
+              });
+            } else if (jobsSkipped > 0) {
+              // already executed today
+            }
+          }
+        } catch {
+          // silent on empty
         }
-      } catch (e) {
-        // Silent JSON parse errors on empty responses
-      }
-    });
-  });
+      });
+    }
+  );
 
   req.on('error', (err) => {
-    // Only warn if connection refused
     if (err.code === 'ECONNREFUSED') {
-      console.warn(`[${currentLocalTime}] ⚠️ Could not reach Next.js server on ${NEXTJS_API_URL}. Ensure Next.js app is running.`);
+      console.warn(`[${currentLocalTime}] ⚠️ Could not reach server at ${NEXTJS_API_URL}. Ensure Next.js is running.`);
     } else {
       console.error(`[${currentLocalTime}] ❌ Scheduler error:`, err.message);
     }
   });
 }
 
-// Run immediately on start
+// Initial check on launch
 triggerCronCheck();
 
 // Check every 30 seconds
 setInterval(triggerCronCheck, 30000);
 
-console.log('✅ Scheduler daemon active in background. Press Ctrl+C to stop.\n');
+console.log('✅ Background scheduler daemon is active. Press Ctrl+C to stop.\n');

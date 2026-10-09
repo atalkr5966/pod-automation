@@ -1,38 +1,35 @@
 import { NextResponse } from 'next/server';
+import { dbService } from '@/server/db';
 import {
-  findUserByUsernameOrEmail,
-  createUser,
+  hashPassword,
   verifyPassword,
-  createSession,
-  validateSession,
-  deleteSession,
-  initDefaultData,
-} from '@/lib/storage';
-
-initDefaultData();
+  signToken,
+  getSessionUser,
+  checkRateLimit,
+  recordFailedAttempt,
+  resetRateLimit,
+  toSafeUser,
+} from '@/server/auth';
 
 export async function GET(request: Request) {
   try {
-    const authHeader = request.headers.get('authorization');
-    const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '') : null;
-
-    if (!token) {
-      return NextResponse.json({ error: 'No authorization token provided' }, { status: 401 });
-    }
-
-    const user = validateSession(token);
+    const user = await getSessionUser(request);
     if (!user) {
-      return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
+      return NextResponse.json({ error: 'Unauthorized or session expired' }, { status: 401 });
     }
 
-    const { passwordHash, salt, ...safeUser } = user;
-    return NextResponse.json({ user: safeUser });
-  } catch (err: any) {
-    console.error('Auth GET Error:', err);
-    return NextResponse.json(
-      { error: err?.message || 'Authentication verification error' },
-      { status: 500 }
-    );
+    const workspace = await dbService.getOrCreateWorkspace();
+    const slackConn = await dbService.getSlackConnection(user.workspaceId);
+
+    return NextResponse.json({
+      user,
+      workspace,
+      slackConnected: slackConn?.status === 'CONNECTED',
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Auth GET Error:', msg);
+    return NextResponse.json({ error: 'Authentication verification failure' }, { status: 500 });
   }
 }
 
@@ -40,82 +37,150 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { action } = body;
+    const clientIp = request.headers.get('x-forwarded-for') || 'local';
 
     if (action === 'register') {
-      const { username, email, name, password, slackWebhook, telegramToken, telegramChatId, discordWebhook } = body;
+      const { username, email, name, password } = body;
 
       if (!username || !email || !password) {
-        return NextResponse.json({ error: 'Username, email, and password are required' }, { status: 400 });
+        return NextResponse.json(
+          { error: 'Username, email, and password are required' },
+          { status: 400 }
+        );
       }
 
       if (password.length < 6) {
-        return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 });
+        return NextResponse.json(
+          { error: 'Password must be at least 6 characters long' },
+          { status: 400 }
+        );
       }
 
-      const existing = findUserByUsernameOrEmail(username) || findUserByUsernameOrEmail(email);
+      const existing =
+        (await dbService.findUserByEmailOrUsername(username)) ||
+        (await dbService.findUserByEmailOrUsername(email));
+
       if (existing) {
-        return NextResponse.json({ error: 'User with this username or email already exists' }, { status: 409 });
+        return NextResponse.json(
+          { error: 'An account with this username or email already exists' },
+          { status: 409 }
+        );
       }
 
-      const user = createUser({
+      const workspace = await dbService.getOrCreateWorkspace();
+      const { hash, salt } = hashPassword(password);
+
+      const newUser = await dbService.createUser({
+        workspaceId: workspace.id,
         username,
         email,
         name: name || username,
-        password,
-        slackWebhook,
+        passwordHash: hash,
+        salt,
+        role: 'admin',
       });
 
-      const token = createSession(user);
-      const { passwordHash, salt, ...safeUser } = user;
+      const token = signToken({
+        userId: newUser.id,
+        workspaceId: newUser.workspaceId,
+        username: newUser.username,
+        email: newUser.email,
+      });
 
-      return NextResponse.json({
-        message: 'Registration successful',
+      const response = NextResponse.json({
+        message: 'Account created successfully',
         token,
-        user: safeUser,
+        user: toSafeUser(newUser),
+        workspace,
       });
+
+      response.cookies.set('pod_session', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 7 * 86400,
+      });
+
+      return response;
     }
 
     if (action === 'login') {
       const { identifier, password } = body;
+
       if (!identifier || !password) {
-        return NextResponse.json({ error: 'Identifier and password are required' }, { status: 400 });
+        return NextResponse.json(
+          { error: 'Identifier and password are required' },
+          { status: 400 }
+        );
       }
 
-      const user = findUserByUsernameOrEmail(identifier);
+      const rateCheck = checkRateLimit(clientIp);
+      if (!rateCheck.allowed) {
+        return NextResponse.json(
+          {
+            error: `Too many failed login attempts. Please wait ${rateCheck.waitSeconds} seconds before trying again.`,
+          },
+          { status: 429 }
+        );
+      }
+
+      const user = await dbService.findUserByEmailOrUsername(identifier);
       if (!user) {
-        return NextResponse.json({ error: 'Invalid username/email or password' }, { status: 401 });
+        recordFailedAttempt(clientIp);
+        return NextResponse.json(
+          { error: 'Invalid username/email or password' },
+          { status: 401 }
+        );
       }
 
       const isValid = verifyPassword(password, user.passwordHash, user.salt);
       if (!isValid) {
-        return NextResponse.json({ error: 'Invalid username/email or password' }, { status: 401 });
+        recordFailedAttempt(clientIp);
+        return NextResponse.json(
+          { error: 'Invalid username/email or password' },
+          { status: 401 }
+        );
       }
 
-      const token = createSession(user);
-      const { passwordHash, salt, ...safeUser } = user;
+      resetRateLimit(clientIp);
 
-      return NextResponse.json({
-        message: 'Login successful',
-        token,
-        user: safeUser,
+      const workspace = await dbService.getOrCreateWorkspace();
+      const token = signToken({
+        userId: user.id,
+        workspaceId: user.workspaceId,
+        username: user.username,
+        email: user.email,
       });
+
+      const response = NextResponse.json({
+        message: 'Signed in successfully',
+        token,
+        user: toSafeUser(user),
+        workspace,
+      });
+
+      response.cookies.set('pod_session', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 7 * 86400,
+      });
+
+      return response;
     }
 
     if (action === 'logout') {
-      const authHeader = request.headers.get('authorization');
-      const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '') : null;
-      if (token) {
-        deleteSession(token);
-      }
-      return NextResponse.json({ success: true, message: 'Logged out' });
+      const response = NextResponse.json({ success: true, message: 'Logged out successfully' });
+      response.cookies.delete('pod_session');
+      return response;
     }
 
-    return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
-  } catch (err: any) {
-    console.error('Auth POST Error:', err);
-    return NextResponse.json(
-      { error: err?.message || 'Authentication processing error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Invalid auth action' }, { status: 400 });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Auth POST Error:', msg);
+    return NextResponse.json({ error: 'Authentication processing failure', details: msg }, { status: 500 });
   }
 }

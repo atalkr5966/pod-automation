@@ -1,70 +1,61 @@
 import { NextResponse } from 'next/server';
-import { validateSession, updateUser, createSession } from '@/lib/storage';
+import { getSessionUser } from '@/server/auth';
+import { dbService } from '@/server/db';
 
 export async function GET(request: Request) {
   try {
-    const authHeader = request.headers.get('authorization');
-    const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '') : null;
-
-    if (!token) {
+    const user = await getSessionUser(request);
+    if (!user) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
-    const user = validateSession(token);
-    if (!user) {
-      return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
-    }
+    const fullUser = await dbService.findUserById(user.id);
+    const slackConn = await dbService.getSlackConnection(user.workspaceId);
+    const schedules = await dbService.listSchedules(user.workspaceId);
 
     return NextResponse.json({
-      name: user.name,
-      username: user.username,
-      email: user.email,
-      channels: user.channels,
-      schedule: user.schedule,
+      name: fullUser?.name,
+      username: fullUser?.username,
+      email: fullUser?.email,
+      slackConnection: slackConn,
+      schedules,
     });
-  } catch (err: any) {
-    console.error('Settings GET Error:', err);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Settings GET Error:', msg);
+    return NextResponse.json({ error: 'Internal Server Error', details: msg }, { status: 500 });
   }
 }
 
 export async function PUT(request: Request) {
   try {
-    const authHeader = request.headers.get('authorization');
-    const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '') : null;
-
-    if (!token) {
+    const user = await getSessionUser(request);
+    if (!user) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
-    const user = validateSession(token);
-    if (!user) {
-      return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
+    const body = await request.json();
+    const { name, channels } = body;
+
+    if (name !== undefined) {
+      await dbService.updateUser(user.id, { name });
     }
 
-    const body = await request.json();
-    const { name, channels, schedule } = body;
-
-    const updates: any = {};
-    if (name !== undefined) updates.name = name;
-    if (channels !== undefined) updates.channels = channels;
-    if (schedule !== undefined) updates.schedule = schedule;
-
-    const updatedUser = updateUser(user.id, updates) || (user ? { ...user, ...updates } : null);
-    const refreshedToken = updatedUser ? createSession(updatedUser) : token;
+    if (channels?.slack?.webhookUrl !== undefined) {
+      await dbService.upsertSlackConnection({
+        workspaceId: user.workspaceId,
+        webhookUrl: channels.slack.webhookUrl,
+        status: channels.slack.webhookUrl ? 'CONNECTED' : 'DISCONNECTED',
+      });
+    }
 
     return NextResponse.json({
       success: true,
       message: 'Settings updated successfully',
-      token: refreshedToken,
-      settings: {
-        name: updatedUser?.name,
-        channels: updatedUser?.channels,
-        schedule: updatedUser?.schedule,
-      },
     });
-  } catch (err: any) {
-    console.error('Settings PUT Error:', err);
-    return NextResponse.json({ error: err?.message || 'Failed to update settings' }, { status: 500 });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Settings PUT Error:', msg);
+    return NextResponse.json({ error: 'Failed to update settings', details: msg }, { status: 500 });
   }
 }

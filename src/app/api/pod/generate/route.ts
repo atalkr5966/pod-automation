@@ -1,36 +1,30 @@
 import { NextResponse } from 'next/server';
-import { validateSession } from '@/lib/storage';
+import { getSessionUser } from '@/server/auth';
+import { dbService } from '@/server/db';
 import { generateOpeningPod, generateClosingPod, analyzeUserPatterns } from '@/lib/analyzer';
 
 export async function POST(request: Request) {
   try {
-    const authHeader = request.headers.get('authorization');
-    const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '') : null;
-
-    if (!token) {
+    const user = await getSessionUser(request);
+    if (!user) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
-    const user = validateSession(token);
-    if (!user) {
-      return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
-    }
-
     const body = await request.json();
-    const { type, customContext } = body;
+    const { type = 'OPENING', customContext } = body;
 
     if (type !== 'OPENING' && type !== 'CLOSING') {
       return NextResponse.json({ error: 'Type must be OPENING or CLOSING' }, { status: 400 });
     }
 
-    let generatedContent = '';
-    if (type === 'OPENING') {
-      generatedContent = generateOpeningPod(user, customContext);
-    } else {
-      generatedContent = generateClosingPod(user, customContext);
-    }
+    const pastData = await dbService.getPastData(user.workspaceId);
 
-    const insights = analyzeUserPatterns(user.pastData || []);
+    const generatedContent =
+      type === 'OPENING'
+        ? generateOpeningPod(pastData, customContext)
+        : generateClosingPod(pastData, customContext);
+
+    const insights = analyzeUserPatterns(pastData);
 
     return NextResponse.json({
       success: true,
@@ -38,8 +32,9 @@ export async function POST(request: Request) {
       pod: generatedContent,
       insights,
     });
-  } catch (err: any) {
-    console.error('Generate POD Error:', err);
-    return NextResponse.json({ error: err?.message || 'Failed to generate POD' }, { status: 500 });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Generate POD Error:', msg);
+    return NextResponse.json({ error: 'Failed to generate POD', details: msg }, { status: 500 });
   }
 }

@@ -1,4 +1,4 @@
-import { PastDataEntry, User } from './storage';
+import { PastDataEntry } from './storage';
 
 export interface AnalysisInsights {
   totalLogs: number;
@@ -48,7 +48,7 @@ export function analyzeUserPatterns(pastData: PastDataEntry[]): AnalysisInsights
     .slice(0, 5);
 
   const recurringTasks = Object.entries(taskFrequency)
-    .filter(([_, count]) => count >= 2)
+    .filter(([, count]) => count >= 2)
     .map(([task]) => task)
     .slice(0, 5);
 
@@ -498,10 +498,23 @@ function synthesizeMemberTasks(
 /**
  * Generate Morning Opening POD in the exact Slack format of the user's past data.
  */
-export function generateOpeningPod(user: User, customContext?: string): string {
+export function generateOpeningPod(
+  userOrPastData?: PastDataEntry[] | { pastData?: PastDataEntry[] } | unknown,
+  customContext?: string
+): string {
   const now = new Date();
   const formattedDate = formatSlackDate(now);
-  const pastData = user.pastData || [];
+  let pastData: PastDataEntry[] = [];
+  if (Array.isArray(userOrPastData)) {
+    pastData = userOrPastData;
+  } else if (
+    userOrPastData &&
+    typeof userOrPastData === 'object' &&
+    'pastData' in userOrPastData &&
+    Array.isArray((userOrPastData as { pastData: PastDataEntry[] }).pastData)
+  ) {
+    pastData = (userOrPastData as { pastData: PastDataEntry[] }).pastData;
+  }
   const template = parsePastDataTemplate(pastData);
 
   const lines: string[] = [];
@@ -526,10 +539,23 @@ export function generateOpeningPod(user: User, customContext?: string): string {
 /**
  * Generate Evening Closing (EOD) POD in the exact Slack format with completion status tags.
  */
-export function generateClosingPod(user: User, customContext?: string): string {
+export function generateClosingPod(
+  userOrPastData?: PastDataEntry[] | { pastData?: PastDataEntry[] } | unknown,
+  customContext?: string
+): string {
   const now = new Date();
   const formattedDate = formatSlackDate(now);
-  const pastData = user.pastData || [];
+  let pastData: PastDataEntry[] = [];
+  if (Array.isArray(userOrPastData)) {
+    pastData = userOrPastData;
+  } else if (
+    userOrPastData &&
+    typeof userOrPastData === 'object' &&
+    'pastData' in userOrPastData &&
+    Array.isArray((userOrPastData as { pastData: PastDataEntry[] }).pastData)
+  ) {
+    pastData = (userOrPastData as { pastData: PastDataEntry[] }).pastData;
+  }
   const template = parsePastDataTemplate(pastData);
 
   const lines: string[] = [];

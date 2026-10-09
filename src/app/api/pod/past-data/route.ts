@@ -1,47 +1,34 @@
 import { NextResponse } from 'next/server';
-import crypto from 'crypto';
-import { validateSession, updateUser, PastDataEntry } from '@/lib/storage';
+import { getSessionUser } from '@/server/auth';
+import { dbService } from '@/server/db';
 import { analyzeUserPatterns } from '@/lib/analyzer';
 
 export async function GET(request: Request) {
   try {
-    const authHeader = request.headers.get('authorization');
-    const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '') : null;
-
-    if (!token) {
+    const user = await getSessionUser(request);
+    if (!user) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
-    const user = validateSession(token);
-    if (!user) {
-      return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
-    }
-
-    const pastData = user.pastData || [];
+    const pastData = await dbService.getPastData(user.workspaceId);
     const insights = analyzeUserPatterns(pastData);
 
     return NextResponse.json({
       pastData,
       insights,
     });
-  } catch (err: any) {
-    console.error('Past-Data GET Error:', err);
-    return NextResponse.json({ error: err?.message || 'Failed to fetch past data' }, { status: 500 });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Past-Data GET Error:', msg);
+    return NextResponse.json({ error: 'Failed to fetch past data', details: msg }, { status: 500 });
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const authHeader = request.headers.get('authorization');
-    const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '') : null;
-
-    if (!token) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    const user = validateSession(token);
+    const user = await getSessionUser(request);
     if (!user) {
-      return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
     const body = await request.json();
@@ -51,7 +38,6 @@ export async function POST(request: Request) {
     if (Array.isArray(tasks)) {
       newTasks = tasks.map((t: string) => t.trim()).filter((t: string) => t.length > 0);
     } else if (rawText && typeof rawText === 'string') {
-      // Split raw text lines into tasks
       newTasks = rawText
         .split('\n')
         .map((l) => l.trim())
@@ -59,50 +45,41 @@ export async function POST(request: Request) {
     }
 
     if (newTasks.length === 0) {
-      return NextResponse.json({ error: 'At least one task is required' }, { status: 400 });
+      return NextResponse.json({ error: 'At least one sprint task is required' }, { status: 400 });
     }
 
-    const newEntry: PastDataEntry = {
-      id: `log_${crypto.randomUUID()}`,
+    const created = await dbService.addPastData({
+      workspaceId: user.workspaceId,
+      userId: user.id,
       date: date || new Date().toISOString().split('T')[0],
       type: type || 'GENERAL',
       tasks: newTasks,
       notes: notes || '',
       category: category || 'Sprint Tasks',
-      createdAt: new Date().toISOString(),
-    };
+    });
 
-    const currentPastData = user.pastData || [];
-    const updatedPastData = [newEntry, ...currentPastData];
-
-    updateUser(user.id, { pastData: updatedPastData });
+    const updatedPastData = await dbService.getPastData(user.workspaceId);
     const insights = analyzeUserPatterns(updatedPastData);
 
     return NextResponse.json({
       success: true,
-      message: 'Past data entry added successfully',
-      entry: newEntry,
+      message: 'Sprint log saved successfully',
+      entry: created,
       pastData: updatedPastData,
       insights,
     });
-  } catch (err: any) {
-    console.error('Past-Data POST Error:', err);
-    return NextResponse.json({ error: err?.message || 'Failed to add past data entry' }, { status: 500 });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Past-Data POST Error:', msg);
+    return NextResponse.json({ error: 'Failed to add past data entry', details: msg }, { status: 500 });
   }
 }
 
 export async function DELETE(request: Request) {
   try {
-    const authHeader = request.headers.get('authorization');
-    const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '') : null;
-
-    if (!token) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    const user = validateSession(token);
+    const user = await getSessionUser(request);
     if (!user) {
-      return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
     const { searchParams } = new URL(request.url);
@@ -112,20 +89,19 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'Log ID is required' }, { status: 400 });
     }
 
-    const currentPastData = user.pastData || [];
-    const updatedPastData = currentPastData.filter((item) => item.id !== id);
-
-    updateUser(user.id, { pastData: updatedPastData });
+    await dbService.deletePastData(id);
+    const updatedPastData = await dbService.getPastData(user.workspaceId);
     const insights = analyzeUserPatterns(updatedPastData);
 
     return NextResponse.json({
       success: true,
-      message: 'Past data entry deleted successfully',
+      message: 'Log deleted successfully',
       pastData: updatedPastData,
       insights,
     });
-  } catch (err: any) {
-    console.error('Past-Data DELETE Error:', err);
-    return NextResponse.json({ error: err?.message || 'Failed to delete past data entry' }, { status: 500 });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Past-Data DELETE Error:', msg);
+    return NextResponse.json({ error: 'Failed to delete past data entry', details: msg }, { status: 500 });
   }
 }

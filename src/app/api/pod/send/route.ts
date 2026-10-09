@@ -1,45 +1,63 @@
 import { NextResponse } from 'next/server';
-import { validateSession } from '@/lib/storage';
-import { dispatchPodMessage } from '@/lib/dispatcher';
+import { getSessionUser } from '@/server/auth';
+import { dbService } from '@/server/db';
+import { sendSlackMessage } from '@/server/slack/client';
 
 export async function POST(request: Request) {
   try {
-    const authHeader = request.headers.get('authorization');
-    const token = authHeader ? authHeader.replace(/^Bearer\s+/i, '') : null;
-
-    if (!token) {
+    const user = await getSessionUser(request);
+    if (!user) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
-    const user = validateSession(token);
-    if (!user) {
-      return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
-    }
-
     const body = await request.json();
-    const { type = 'OPENING', content } = body;
+    const { type = 'OPENING', content, channel } = body;
 
     if (!content || !content.trim()) {
       return NextResponse.json({ error: 'Content is required' }, { status: 400 });
     }
 
-    const results = await dispatchPodMessage({
-      user,
-      type,
-      content,
+    const slackConn = await dbService.getSlackConnection(user.workspaceId);
+    const targetChannel = channel || slackConn?.defaultChannel || '#general';
+    const startTime = Date.now();
+
+    const sendRes = await sendSlackMessage({
+      webhookUrl: slackConn?.webhookUrl,
+      botToken: slackConn?.botAccessToken,
+      channel: targetChannel,
+      text: content,
     });
 
-    const hasSuccess = results.some((r) => r.success);
+    const durationMs = Date.now() - startTime;
+    const execLog = await dbService.recordExecutionStart({
+      executionKey: `exec_manual_pod_${type}_${Date.now()}`,
+      actionType: type,
+      channel: targetChannel,
+    });
+
+    await dbService.recordDelivery({
+      executionId: execLog.id,
+      slackChannelId: targetChannel,
+      status: sendRes.status,
+      response: sendRes.rawResponse,
+    });
+
+    await dbService.recordExecutionComplete(execLog.id, {
+      status: sendRes.success ? 'SUCCESS' : 'FAILED',
+      durationMs,
+      errorMessage: sendRes.error,
+    });
 
     return NextResponse.json({
-      success: hasSuccess,
-      results,
-      message: hasSuccess
-        ? `Successfully dispatched ${type} POD to Slack!`
-        : `Failed to dispatch to Slack webhook.`,
+      success: sendRes.success,
+      status: sendRes.status,
+      message: sendRes.success
+        ? `Successfully dispatched ${type} POD to ${targetChannel}!`
+        : `Failed to dispatch: ${sendRes.error}`,
     });
-  } catch (err: any) {
-    console.error('Send POD Error:', err);
-    return NextResponse.json({ error: err?.message || 'Failed to dispatch POD' }, { status: 500 });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Send POD Error:', msg);
+    return NextResponse.json({ error: 'Failed to dispatch POD', details: msg }, { status: 500 });
   }
 }
